@@ -1,8 +1,27 @@
 package hello;
 
+import java.io.File;
+import java.io.FileReader;
+import java.io.Reader;
+import java.io.StringReader;
+import java.io.StringWriter;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamReader;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.stax.StAXSource;
+import javax.xml.transform.stream.StreamResult;
+import javax.xml.xpath.XPath;
+import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpression;
+import javax.xml.xpath.XPathExpressionException;
+import javax.xml.xpath.XPathFactory;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +35,8 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestTemplate;
+//import org.w3c.dom.Document;
+//import org.xml.sax.InputSource;
 
 @SpringBootApplication
 public class Application {
@@ -36,13 +57,7 @@ public class Application {
 		
 		return args -> {
 			
-			/*String xmlString = "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>Trial Balance</ID></HEADER><BODY><DESC><STATICVARIABLES>"
-					+ "<EXPLODEFLAG>Yes</EXPLODEFLAG><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>";*/
-			
-			//String xmlString = "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE><ID>Balance Sheet</ID></HEADER><BODY><DESC><STATICVARIABLES>"
-			//		+ "<EXPLODEFLAG>Yes</EXPLODEFLAG><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES></DESC></BODY></ENVELOPE>";
-			
-			log.info("Reading config file............");
+			log.info("Reading config file started...");
 			Map<String, String> configDetail = PropertyReader.getConfigDetail();
 			
 			if(null == configDetail || configDetail.size() < 1) {
@@ -52,14 +67,14 @@ public class Application {
 			log.info("Reading config file completed.");
 			
 			//log.info("*********Config details***************");
-			configDetail.forEach((key, value) -> {
-			    //log.info("Key : " + key + "  || Value : " + value);
-			});
+			/*configDetail.forEach((key, value) -> {
+			    log.info("Key : " + key + "  || Value : " + value);
+			});*/
 			
 			List<String> requestList = PropertyReader.getRequestList(configDetail.get(Constants.REQUEST_LIST));
 			
 			if(null == requestList || requestList.size() < 1) {
-				throw new Exception("Request list not valid!!!!!!!!!");
+				throw new Exception("Request list not valid!!!");
 			}
 			
 			//log.info("*********Tally request list***************");
@@ -69,26 +84,82 @@ public class Application {
 				
 				//get data from tally
 				log.info("Retreiving data from Tally for " + tallyRequest  + ".................");
-				log.info("Tally request : " + configDetail.get(tallyRequest));
+				//log.info("Tally request : " + configDetail.get(tallyRequest));
 				
 			    HttpHeaders headers = new HttpHeaders();
 			    headers.setContentType(MediaType.APPLICATION_XML);
 			    HttpEntity<String> request = new HttpEntity<String>(configDetail.get(tallyRequest), headers);
 			    
-			    //HttpEntity<String> request = new HttpEntity<String>(xmlString, headers);
-			    //ResponseEntity<String> response = restTemplate.postForEntity("http://192.168.0.9:9000", request, String.class);
-			    //ResponseEntity<String> response = restTemplate.postForEntity("http://localhost:9000", request, String.class);
 			    ResponseEntity<String> response = restTemplate.postForEntity(configDetail.get(Constants.TALLY_URL), request, String.class);
 			    
 			    //log.info(response.getBody().toString());
 			    
-			  
+			    if(null != response && null != response.getStatusCode() ) {
+			    	log.info("Response from Tally : " + response.getStatusCode().toString());
+			    }
+			    
+			    //parse tally response, split
+			    String tallyResponse = response.getBody().toString();
+			    
+			    if(null == tallyResponse || tallyResponse.length() < 1) {
+			    	log.info("No valid response from tally...");
+			    	return;
+			    }
+			    
+			    log.info("Data retrived from tally successfully!!!");
+			    
+			    log.info("Data split and AWS transmission started...");
+			    
+			    XMLInputFactory xif = XMLInputFactory.newInstance();
+			    Reader reader = new StringReader(tallyResponse);
+		        //XMLStreamReader xsr = xif.createXMLStreamReader(new FileReader("/Users/test_file_1.xml"));
+		        XMLStreamReader xsr = xif.createXMLStreamReader(reader);
+		        
+		        xsr.nextTag(); // Advance to next element
+		        
+		        TransformerFactory tf = TransformerFactory.newInstance();
+		        Transformer t = tf.newTransformer();
+		        
+		        int count =1;
+		        
+		        while(xsr.hasNext()) {
+		        	
+		        	if(xsr.isStartElement() && xsr.getLocalName().equals("TALLYMESSAGE")) {
+		        		
+		        		StringWriter sw = new StringWriter();
+		                t.transform(new StAXSource(xsr), new StreamResult(sw));
+		                
+		                
+		                
+		                //post data received from tally to aws server
+					    
+					    request = new HttpEntity<String>(sw.toString(), headers);
+				
+					    response = restTemplate.postForEntity(configDetail.get(Constants.AWS_URL), request, String.class);
+					    
+					    //log.info(response.getBody().toString());
+					    
+					    if(null != response && response.getStatusCode().is2xxSuccessful()) {
+					    	log.info("Data sent to server successfully!!!!!!! - " + count++);
+					    } else {
+					    	log.info("Data transmission failed!!!!!!!! - " + count++);
+					    	//log.info(response.getBody().toString());
+					    }
+		                
+			            
+		        	}
+		        	
+		        	xsr.next();
+		        	
+		        }
+
+		        log.info("Data split and AWS transmission completed...");
+			    
 			    //post data received from tally to aws server
-			    log.info("Sending data to Report Server for " + tallyRequest + ".................");
+			    /*log.info("Sending data to Report Server for " + tallyRequest + ".................");
 			    
 			    request = new HttpEntity<String>(response.getBody().toString(), headers);
 		
-			    //response = restTemplate.postForEntity("http://localhost:8080/restws/services/tallyservice/tally", request, String.class);
 			    response = restTemplate.postForEntity(configDetail.get(Constants.AWS_URL), request, String.class);
 			    
 			    //log.info(response.getBody().toString());
@@ -98,7 +169,7 @@ public class Application {
 			    } else {
 			    	log.info("Data transmission failed!!!!!!!!");
 			    	log.info(response.getBody().toString());
-			    }
+			    }*/
 		    
 			}
 			
@@ -112,4 +183,5 @@ public class Application {
 		    
 		};
 	}
+	
 }

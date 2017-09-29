@@ -20,8 +20,8 @@ public class PropertyReader {
 		try {
 
 			//input = new FileInputStream(Constants.CONFIG_FILE);
-			input = new FileInputStream("/Users/ashokarulsamy/projects/poc/day_book_basic_config.properties");
-			//input = new FileInputStream("c:/test_tally/config.properties");
+			//input = new FileInputStream("/Users/ashokarulsamy/projects/poc/day_book_split_config.properties");
+			input = new FileInputStream("c:/test_tally/day_book_split_config.properties");
 			
 			// load a properties file
 			prop.load(input);
